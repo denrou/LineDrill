@@ -1,12 +1,15 @@
 import 'dart:io';
 
 import 'package:dartchess/dartchess.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/game_record.dart';
 import 'board_style.dart';
+import '../core/opening_report.dart';
 import '../core/opening_tree.dart';
+import '../core/openings.dart';
 import '../core/repertoire.dart';
 import '../core/weak_lines.dart';
 import '../data/chesscom_client.dart';
@@ -135,6 +138,24 @@ final repertoireUsageProvider = Provider<Map<String, EntryUsage>>((ref) {
   final repertoire = ref.watch(repertoireProvider).value;
   if (tree == null || repertoire == null) return const {};
   return repertoireUsage(tree.games, repertoire);
+});
+
+/// Noms des ouvertures, par position (table Lichess embarquée).
+final openingBookProvider = FutureProvider<OpeningBook>(
+  (ref) async => OpeningBook.parse(await rootBundle.loadString('assets/openings.tsv')),
+);
+
+/// Bilan des ouvertures de l'arbre filtré ; `null` tant que les parties chargent.
+final openingReportProvider = Provider<OpeningReport?>((ref) {
+  final tree = ref.watch(treeProvider);
+  if (tree == null) return null;
+  return openingReport(
+    tree,
+    color: ref.watch(filterProvider).color,
+    // Sans la table, le bilan reste juste : les variantes ne sont simplement pas nommées.
+    book: ref.watch(openingBookProvider).value ?? OpeningBook.empty,
+    repertoire: ref.watch(repertoireProvider).value,
+  );
 });
 
 /// Jeton personnel Lichess pour l'explorateur.
