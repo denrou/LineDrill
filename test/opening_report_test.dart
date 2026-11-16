@@ -277,11 +277,39 @@ void main() {
     final games = [..._repeat(12, 'e4 e5 Qh5 Nc6', 0), ..._repeat(6, 'e4 e5 Nf3 Nc6', 1)];
     OpeningVariant only(OpeningReport report) => report.families.single.variants.single;
 
-    test('sans avis : mes coups les plus joués, à faire vérifier', () {
+    test('sans avis : mon premier coup à faire vérifier, la suite attend son verdict', () {
       final report = _report(games);
-      expect(report.unchecked.map((h) => h.move.san), ['e4', 'Qh5']);
-      expect(report.steps.map((s) => s.reference), ['e4', 'Qh5']);
+      expect(report.unchecked.map((h) => h.move.san), ['e4']);
+      expect(report.steps.map((s) => s.reference), ['e4']);
+      // Le bilan, lui, montre déjà toute la variante.
+      expect(only(report).line.join(' '), 'e4 e5 Qh5 Nc6');
       expect(only(report).knownDepth, 2);
+
+      final next = _report(games, checks: Map.fromEntries([_check('', 'e4', _good)]));
+      expect(next.unchecked.map((h) => h.move.san), ['Qh5']);
+      expect(next.steps.map((s) => s.reference), ['e4', 'Qh5']);
+    });
+
+    test('la ligne d\'une position vient de l\'ordre de coups le plus joué', () {
+      final report = _report(
+        [
+          ..._repeat(6, 'e4 e6 d4 d5', 1, color: Side.black),
+          ..._repeat(60, 'e4 e6 Nf3 d5', 1, color: Side.black),
+          ..._repeat(50, 'd4 e6 e4 d5', 0, color: Side.black),
+          ..._repeat(10, 'd4 e6 c4 d5', 1, color: Side.black),
+        ],
+        color: Side.black,
+        checks: Map.fromEntries([
+          _check('e4', 'e6', _good),
+          _check('d4', 'e6', _good),
+          _check('e4 e6 d4', 'd5', _good),
+          _check('e4 e6 Nf3', 'd5', _good),
+          _check('d4 e6 c4', 'd5', _good),
+        ]),
+      );
+      expect(report.unchecked, isEmpty);
+      final french = report.steps.singleWhere((s) => s.node.key == _key('e4 e6 d4'));
+      expect(french.line, ['d4', 'e6', 'e4']);
     });
 
     test('coup habituel mauvais : remplacé par un autre de mes coups réguliers', () {

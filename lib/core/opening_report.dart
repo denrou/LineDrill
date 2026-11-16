@@ -152,16 +152,19 @@ class OpeningReport {
   /// Nombre de parties à partir duquel une réponse adverse fait une variante.
   final int minGames;
 
-  /// Toutes les positions du bilan où c'est à moi de jouer, une fois chacune.
+  /// Les positions où mon répertoire me mène, une fois chacune : celles du
+  /// bilan atteintes en ne suivant que des coups à retenir. Les variantes
+  /// montrent aussi ce que je joue sous un coup à abandonner ; pas cette liste.
   final List<HabitStep> steps;
 
   /// Mes coups qui attendent l'avis de Stockfish. Tant qu'il en reste, les
-  /// coups à retenir sont provisoires.
+  /// coups à retenir sont provisoires et [steps] s'arrête à eux : rien n'est
+  /// demandé sous un coup qui peut encore être remplacé.
   final List<UncheckedHabit> unchecked;
 }
 
 /// Coups de référence à ajouter au [repertoire] : le coup à retenir de chaque
-/// position de [report] (bilan de [color]) qui n'en a pas encore.
+/// position de [OpeningReport.steps] (bilan de [color]) qui n'en a pas encore.
 List<RepertoireEntry> habitEntries(OpeningReport report, Side color, Repertoire repertoire) => [
       for (final step in report.steps)
         if (repertoire.lookup(color, step.node.key) == null)
@@ -221,14 +224,14 @@ OpeningReport openingReport(
   // position d'arrivée.
   final familyAt = <String, String?>{};
   final found = <String, ({List<String> line, OpeningName? name, List<HabitStep> steps, int flow})>{};
-  final stepAt = <String, HabitStep>{};
+  final stepAt = <String, ({HabitStep step, int flow})>{};
   final unchecked = <String, UncheckedHabit>{};
 
   // [flow] : le coup le moins joué du chemin, qui départage deux ordres de
   // coups vers la même position. [path] : positions déjà traversées, une
   // répétition de coups ne doit pas faire tourner en rond. [onBook] : le
   // chemin n'a suivi que des coups à retenir, la position est donc de
-  // celles où mon répertoire me mène.
+  // celles où mon répertoire me mène, pour ce qui en est déjà vérifié.
   void walk(
     PositionNode node,
     List<String> line,
@@ -273,13 +276,18 @@ OpeningReport openingReport(
     final starred = star == null ? null : node.move(star);
     final played = starred != null && starred.count == moves.first.count ? starred : moves.first;
     var reference = star;
+    // Tant qu'un avis manque, le coup à retenir peut encore changer.
+    var settled = true;
     if (reference == null && onBook) {
       for (final move in moves.take(3)) {
         // Moins d'une partie sur cinq : pas une habitude à garder.
         if (move != played && move.count * 5 < reached) break;
         final key = habitCheckKey(node.key, move.san);
         final check = checks[key];
-        if (check == null) unchecked.putIfAbsent(key, () => UncheckedHabit(node, move));
+        if (check == null) {
+          unchecked.putIfAbsent(key, () => UncheckedHabit(node, move));
+          settled = false;
+        }
         if (check == null || !check.isError) {
           reference = move.san;
           break;
@@ -302,7 +310,8 @@ OpeningReport openingReport(
               : HabitStatus.known,
       check: onBook ? checks[habitCheckKey(node.key, played.san)] : null,
     );
-    if (onBook) stepAt.putIfAbsent(node.key, () => step);
+    // Comme pour les variantes, le chemin le plus joué donne sa ligne.
+    if (onBook && (stepAt[node.key]?.flow ?? -1) < flow) stepAt[node.key] = (step: step, flow: flow);
     // Un coup à retenir que je ne joue presque jamais ne doit pas cacher
     // les ouvertures que je joue vraiment en dessous.
     final kept = node.move(reference);
@@ -315,7 +324,7 @@ OpeningReport openingReport(
       name,
       {...path, next.childKey},
       math.min(flow, next.count),
-      onBook && next == kept,
+      onBook && settled && next == kept,
     );
   }
 
@@ -357,7 +366,7 @@ OpeningReport openingReport(
   return OpeningReport(
     families,
     threshold,
-    steps: stepAt.values.toList(),
+    steps: [for (final (:step, flow: _) in stepAt.values) step],
     unchecked: unchecked.values.toList(),
   );
 }

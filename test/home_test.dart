@@ -506,7 +506,7 @@ void openingsTests() {
       await _settle(tester);
     }
     expect(added, findsOneWidget);
-    expect(find.text('Tes coups habituels sont vérifiés et tous dans ton répertoire.'), findsOneWidget);
+    expect(find.textContaining('Rien à ajouter'), findsOneWidget);
     expect(find.text('Ton répertoire prévoit 2. d4, tu joues surtout 2. Nf3 (55 %).'), findsOneWidget);
 
     final container = ProviderScope.containerOf(tester.element(find.byType(HomeShell, skipOffstage: false)));

@@ -41,11 +41,14 @@ class _PickyEngine implements ChessEngine {
   final asked = <String>[];
   Object? failure;
 
+  /// Position où [failure] est levée ; `null` : à la première analyse.
+  String? failAt;
+
   @override
   Future<List<EngineLine>> analyse(String fen, {int depth = 12, int multiPv = 1}) async {
-    if (failure != null) throw failure!;
     final p = Chess.fromSetup(Setup.parseFen(fen));
     final key = positionKey(p);
+    if (failure != null && (failAt == null || failAt == key)) throw failure!;
     asked.add(key);
     if (key == _key('e4 c5')) return [const EngineLine('d2d4', 40)];
     if (key == _key('e4 c5 Nf3')) return [const EngineLine('d7d6', 400)];
@@ -93,14 +96,19 @@ void main() {
 
   test('juge mes coups, corrige le mauvais et repasse sur le coup de rechange', () async {
     final container = newContainer();
-    expect((await report(container)).unchecked.map((h) => h.move.san), ['e4', 'Nf3', 'Nf3']);
+    expect((await report(container)).unchecked.map((h) => h.move.san), ['e4']);
 
     await container.read(habitCheckProvider.notifier).start();
     final state = container.read(habitCheckProvider);
     expect(state.running, isFalse);
     expect(state.error, isNull);
-    // Trois coups au premier passage, puis 2. d4 proposé à la place de 2. Nf3.
+    expect(state.color, Side.white);
+    // 1. e4, puis 2. Nf3 dans chaque variante, puis 2. d4 proposé à la place
+    // de 2. Nf3 contre la Sicilienne.
     expect(state.done, 4);
+    // Sans explication à produire : une analyse par coup, deux quand le coup
+    // n'est pas le premier choix du moteur.
+    expect(engine.asked, hasLength(7));
 
     final checked = await report(container);
     expect(checked.unchecked, isEmpty);
@@ -155,5 +163,29 @@ void main() {
     expect(state.running, isFalse);
     expect(state.error, contains('pas de moteur'));
     expect((await report(container)).unchecked, isNotEmpty);
+  });
+
+  test('panne en cours de route : les coups déjà jugés sont gardés', () async {
+    engine
+      ..failure = StateError('moteur perdu')
+      ..failAt = _key('e4 e5');
+    final container = newContainer();
+    await report(container);
+    await container.read(habitCheckProvider.notifier).start();
+    expect(container.read(habitCheckProvider).error, contains('moteur perdu'));
+
+    final saved = await newContainer().read(habitChecksProvider.future);
+    expect(saved.keys, containsAll([habitCheckKey(_key(''), 'e4'), habitCheckKey(_key('e4 c5'), 'Nf3')]));
+    expect(saved.containsKey(habitCheckKey(_key('e4 e5'), 'Nf3')), isFalse);
+  });
+
+  test('la couleur du lancement est gardée si l\'écran en change', () async {
+    final container = newContainer();
+    await report(container);
+    final run = container.read(habitCheckProvider.notifier).start();
+    container.read(filterProvider.notifier).setColor(Side.black);
+    await run;
+    expect(container.read(habitCheckProvider).color, Side.white);
+    expect(container.read(habitCheckProvider).done, 4);
   });
 }

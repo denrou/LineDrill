@@ -6,7 +6,6 @@ import '../app/habit_controller.dart';
 import '../app/providers.dart';
 import '../core/opening_report.dart';
 import '../core/pgn_import.dart';
-import '../core/repertoire.dart';
 import 'format.dart';
 
 /// Bilan de mes ouvertures : ce que je joue le plus, variante par variante,
@@ -88,27 +87,30 @@ class _HabitPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final check = ref.watch(habitCheckProvider);
     final repertoire = ref.watch(repertoireProvider).value;
+    if (repertoire == null) return const SizedBox.shrink();
     final theme = Theme.of(context);
+    // Une erreur ne concerne que le bilan (la couleur) où elle est arrivée.
+    final error = check.color == color ? check.error : null;
     final String text;
     Widget? action;
 
     if (check.running) {
       text = 'Stockfish vérifie tes coups habituels : ${check.done} sur ${check.total}.';
     } else if (report.unchecked.isNotEmpty) {
-      text = check.error != null
-          ? 'Vérification impossible : ${check.error}'
+      text = error != null
+          ? 'Vérification impossible : $error'
           : 'Stockfish peut vérifier tes coups habituels et remplacer ceux qui perdent du terrain, '
               'avant d\'en faire ton répertoire.';
       action = FilledButton.icon(
         onPressed: () => ref.read(habitCheckProvider.notifier).start(),
         icon: const Icon(Icons.fact_check_outlined, size: 18),
-        label: Text(check.error != null ? 'Réessayer' : 'Vérifier mes coups'),
+        label: Text(error != null ? 'Réessayer' : 'Vérifier mes coups'),
       );
     } else {
-      final entries = repertoire == null ? const <RepertoireEntry>[] : habitEntries(report, color, repertoire);
+      final entries = habitEntries(report, color, repertoire);
       final fixes = report.steps.where((s) => s.status == HabitStatus.toFix).length;
       if (entries.isEmpty) {
-        text = 'Tes coups habituels sont vérifiés et tous dans ton répertoire.';
+        text = 'Rien à ajouter : là où ton répertoire te mène, chaque position a déjà son coup de référence.';
       } else {
         final verdict = switch (fixes) {
           0 => 'rien à corriger',

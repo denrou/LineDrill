@@ -28,13 +28,16 @@ class RepertoireStore {
   }
 
   /// Écrit dans un fichier temporaire puis le renomme, pour ne jamais
-  /// laisser un répertoire à moitié écrit.
-  Future<void> saveRepertoire(Repertoire repertoire) async {
+  /// laisser un fichier à moitié écrit.
+  Future<void> _writeAtomic(File file, String content) async {
     await root.create(recursive: true);
-    final tmp = File('${_repertoireFile.path}.tmp');
-    await tmp.writeAsString(const JsonEncoder.withIndent(' ').convert(repertoire.toJson()));
-    await tmp.rename(_repertoireFile.path);
+    final tmp = File('${file.path}.tmp');
+    await tmp.writeAsString(content);
+    await tmp.rename(file.path);
   }
+
+  Future<void> saveRepertoire(Repertoire repertoire) =>
+      _writeAtomic(_repertoireFile, const JsonEncoder.withIndent(' ').convert(repertoire.toJson()));
 
   Future<String?> lichessToken() async {
     if (!_tokenFile.existsSync()) return null;
@@ -75,13 +78,9 @@ class RepertoireStore {
 
   /// Remplace la clé [key] des réglages par [value].
   Future<void> updateSetting(String key, Object? value) {
-    final write = _settingsQueue.then((_) async {
-      await root.create(recursive: true);
-      final next = {..._readSettings(), key: value};
-      final tmp = File('${_settingsFile.path}.tmp');
-      await tmp.writeAsString(jsonEncode(next));
-      await tmp.rename(_settingsFile.path);
-    });
+    final write = _settingsQueue.then(
+      (_) => _writeAtomic(_settingsFile, jsonEncode({..._readSettings(), key: value})),
+    );
     _settingsQueue = write.catchError((Object _) {});
     return write;
   }
@@ -105,12 +104,8 @@ class RepertoireStore {
     }
   }
 
-  Future<void> saveHabitChecks(Map<String, HabitCheck> checks) async {
-    await root.create(recursive: true);
-    final tmp = File('${_habitsFile.path}.tmp');
-    await tmp.writeAsString(jsonEncode({for (final e in checks.entries) e.key: e.value.toJson()}));
-    await tmp.rename(_habitsFile.path);
-  }
+  Future<void> saveHabitChecks(Map<String, HabitCheck> checks) =>
+      _writeAtomic(_habitsFile, jsonEncode({for (final e in checks.entries) e.key: e.value.toJson()}));
 
   /// État des révisions (répétition espacée).
   Future<DrillDeck> loadDeck() async {
@@ -118,10 +113,5 @@ class RepertoireStore {
     return DrillDeck.fromJson((jsonDecode(_drillFile.readAsStringSync()) as Map).cast<String, Object?>());
   }
 
-  Future<void> saveDeck(DrillDeck deck) async {
-    await root.create(recursive: true);
-    final tmp = File('${_drillFile.path}.tmp');
-    await tmp.writeAsString(jsonEncode(deck.toJson()));
-    await tmp.rename(_drillFile.path);
-  }
+  Future<void> saveDeck(DrillDeck deck) => _writeAtomic(_drillFile, jsonEncode(deck.toJson()));
 }
