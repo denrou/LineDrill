@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:dartchess/dartchess.dart';
 
 import 'game_record.dart';
@@ -20,7 +22,6 @@ enum HabitStatus {
 /// Une position d'une variante où c'est à moi de jouer.
 class HabitStep {
   const HabitStep({
-    required this.node,
     required this.line,
     required this.reached,
     required this.played,
@@ -28,8 +29,6 @@ class HabitStep {
     required this.reference,
     required this.status,
   });
-
-  final PositionNode node;
 
   /// Coups depuis la position initiale jusqu'à cette position.
   final List<String> line;
@@ -40,7 +39,7 @@ class HabitStep {
   /// Mon coup le plus joué ici.
   final MoveStats played;
 
-  /// Mon deuxième coup le plus joué, s'il y en a un.
+  /// Mon autre coup le plus joué, s'il y en a un.
   final MoveStats? alternative;
 
   /// Coup à retenir, en SAN : celui du répertoire, sinon mon coup habituel.
@@ -54,13 +53,7 @@ class HabitStep {
 
 /// Une suite de coups que mes adversaires me font jouer assez souvent.
 class OpeningVariant {
-  const OpeningVariant({
-    required this.line,
-    required this.name,
-    required this.games,
-    required this.score,
-    required this.steps,
-  });
+  OpeningVariant({required this.line, required this.name, required this.games, required this.steps});
 
   /// Coups de la variante depuis la position initiale.
   final List<String> line;
@@ -68,15 +61,15 @@ class OpeningVariant {
   /// Nom de la position nommée la plus profonde de la variante.
   final OpeningName? name;
 
-  /// Parties passées par la position où la dernière réponse adverse de la
-  /// variante m'amène, et mon score dans ces parties.
+  /// Parties arrivées au bout de [line], quel que soit l'ordre des coups.
   final List<GameRecord> games;
-  final double score;
-
-  int get count => games.length;
 
   /// Mes coups dans la variante, dans l'ordre.
   final List<HabitStep> steps;
+
+  int get count => games.length;
+
+  late final double score = _meanScore(games);
 
   /// Nombre de mes coups acquis d'affilée depuis le début.
   int get knownDepth => steps.takeWhile((s) => s.status == HabitStatus.known).length;
@@ -87,20 +80,20 @@ class OpeningVariant {
 
 /// Les variantes d'une même ouverture (« Scandinavian Defense »).
 class OpeningFamily {
-  OpeningFamily(this.name, this.variants);
+  OpeningFamily(this.name, this.variants, this.games);
 
   final String name;
 
   /// De la plus jouée à la moins jouée.
   final List<OpeningVariant> variants;
 
-  /// Parties de la famille, chacune comptée une fois même si deux variantes
-  /// se rejoignent par un autre ordre de coups.
-  late final Set<GameRecord> games = {for (final v in variants) ...v.games};
+  /// Parties de l'ouverture : celles de ses variantes, et celles qui les
+  /// quittent en route (réponse adverse rare, autre coup de ma part).
+  final List<GameRecord> games;
 
   int get count => games.length;
 
-  late final double score = games.fold<double>(0, (sum, g) => sum + g.score) / games.length;
+  late final double score = _meanScore(games);
 }
 
 /// Mes ouvertures, de la plus jouée à la moins jouée.
@@ -121,6 +114,9 @@ const unnamedFamily = 'Autres lignes';
 /// après un premier import.
 int habitMinGames(int games) => (games / 60).round().clamp(5, 10);
 
+double _meanScore(List<GameRecord> games) =>
+    games.isEmpty ? 0 : games.fold<double>(0, (sum, g) => sum + g.score) / games.length;
+
 /// Bilan de mes ouvertures avec [color] : ce que je joue, variante par
 /// variante, et jusqu'où mes coups sont une habitude.
 ///
@@ -131,6 +127,9 @@ int habitMinGames(int games) => (games / 60).round().clamp(5, 10);
 /// ne font qu'une variante, celle du plus joué. Un de mes coups est acquis
 /// s'il est joué dans au moins [minShare] des parties (au pour cent près,
 /// comme à l'affichage) et s'accorde avec le répertoire.
+///
+/// Chaque partie compte dans une seule ouverture : celle de la position la
+/// plus profonde de son chemin que le parcours a traversée.
 OpeningReport openingReport(
   OpeningTree tree, {
   required Side color,
@@ -139,42 +138,50 @@ OpeningReport openingReport(
   int? minGames,
   double minShare = 0.6,
 }) {
-  final threshold = minGames ?? habitMinGames(tree.games.length);
-  final variants = <OpeningVariant>[];
+  final threshold = math.max(1, minGames ?? habitMinGames(tree.games.length));
 
-  // Parties passées par chaque position, quel que soit l'ordre des coups.
-  final reaching = <String, Set<GameRecord>>{};
+  // Parties passées par chaque position, quel que soit l'ordre des coups
+  // (une partie qui répète une position n'y compte qu'une fois).
+  final reaching = <String, List<GameRecord>>{tree.rootKey: tree.games};
   for (final game in tree.games) {
     var node = tree.root;
     for (final san in game.sans) {
       final move = node.move(san);
       if (move == null) break;
-      reaching.putIfAbsent(move.childKey, () => {}).add(game);
+      // Toutes les parties partent déjà de la position initiale.
+      if (move.childKey != tree.rootKey) {
+        final games = reaching.putIfAbsent(move.childKey, () => []);
+        if (games.isEmpty || !identical(games.last, game)) games.add(game);
+      }
       node = tree.node(move.childKey)!;
     }
   }
-  final ended = <String>{};
 
-  // [via] : dernière réponse adverse suivie (à défaut, mon premier coup) ;
-  // la position qu'elle atteint donne les parties de la variante. [path] : positions déjà
-  // traversées, une répétition de coups ne doit pas faire tourner en rond.
+  // Ouverture de chaque position traversée, et variante retenue pour chaque
+  // position d'arrivée.
+  final familyAt = <String, String?>{};
+  final found = <String, ({OpeningVariant variant, int flow})>{};
+
+  // [flow] : le coup le moins joué du chemin, qui départage deux ordres de
+  // coups vers la même position. [path] : positions déjà traversées, une
+  // répétition de coups ne doit pas faire tourner en rond.
   void walk(
     PositionNode node,
     List<String> line,
     List<HabitStep> steps,
-    MoveStats? via,
     OpeningName? name,
     Set<String> path,
+    int flow,
   ) {
     name = book.nameOf(node.key) ?? name;
+    familyAt.putIfAbsent(node.key, () => name?.family);
     void end(List<HabitStep> steps) {
-      // Réponses adverses les plus jouées d'abord : le premier chemin qui
-      // mène à la position de [via] est le plus fréquent, les suivants le
-      // rejoignent par un autre ordre de coups.
-      if (via == null || !ended.add(via.childKey)) return;
-      final games = reaching[via.childKey]!.toList();
-      final score = games.fold<double>(0, (sum, g) => sum + g.score) / games.length;
-      variants.add(OpeningVariant(line: line, name: name, games: games, score: score, steps: steps));
+      if (line.isEmpty && steps.isEmpty) return;
+      final known = found[node.key];
+      if (known != null && known.flow >= flow) return;
+      final variant = OpeningVariant(line: line, name: name, games: reaching[node.key]!, steps: steps);
+      found[node.key] = (variant: variant, flow: flow);
+      familyAt[node.key] = name?.family;
     }
 
     final moves = node.moves;
@@ -182,22 +189,30 @@ OpeningReport openingReport(
       final replies = moves.where((m) => m.count >= threshold && !path.contains(m.childKey)).toList();
       if (replies.isEmpty) return end(steps);
       for (final reply in replies) {
-        walk(tree.node(reply.childKey)!, [...line, reply.san], steps, reply, name, {...path, reply.childKey});
+        walk(
+          tree.node(reply.childKey)!,
+          [...line, reply.san],
+          steps,
+          name,
+          {...path, reply.childKey},
+          math.min(flow, reply.count),
+        );
       }
       return;
     }
 
     final reached = moves.fold<int>(0, (sum, m) => sum + m.count);
     if (reached < threshold) return end(steps);
-    final played = moves.first;
     final star = repertoire?.lookup(color, node.key)?.san;
+    // À égalité de parties, le coup du répertoire est mon coup habituel.
+    final starred = star == null ? null : node.move(star);
+    final played = starred != null && starred.count == moves.first.count ? starred : moves.first;
     final reference = star ?? played.san;
     final step = HabitStep(
-      node: node,
       line: line,
       reached: reached,
       played: played,
-      alternative: moves.length > 1 ? moves[1] : null,
+      alternative: moves.where((m) => m != played).firstOrNull,
       reference: reference,
       status: reference != played.san
           ? HabitStatus.offRepertoire
@@ -211,21 +226,38 @@ OpeningReport openingReport(
       tree.node(next.childKey)!,
       [...line, reference],
       [...steps, step],
-      via ?? next,
       name,
       {...path, next.childKey},
+      math.min(flow, next.count),
     );
   }
 
-  walk(tree.root, const [], const [], null, null, {tree.rootKey});
+  walk(tree.root, const [], const [], null, {tree.rootKey}, tree.games.length);
+
+  final gamesOf = <String, List<GameRecord>>{};
+  for (final game in tree.games) {
+    var node = tree.root;
+    var family = familyAt[tree.rootKey];
+    for (final san in game.sans) {
+      final move = node.move(san);
+      if (move == null) break;
+      if (familyAt.containsKey(move.childKey)) family = familyAt[move.childKey];
+      node = tree.node(move.childKey)!;
+    }
+    gamesOf.putIfAbsent(family ?? unnamedFamily, () => []).add(game);
+  }
 
   final byFamily = <String, List<OpeningVariant>>{};
-  for (final variant in variants) {
+  for (final (:variant, flow: _) in found.values) {
     byFamily.putIfAbsent(variant.name?.family ?? unnamedFamily, () => []).add(variant);
   }
   final families = [
     for (final entry in byFamily.entries)
-      OpeningFamily(entry.key, entry.value..sort((a, b) => b.count.compareTo(a.count))),
+      OpeningFamily(
+        entry.key,
+        entry.value..sort((a, b) => b.count.compareTo(a.count)),
+        gamesOf[entry.key] ?? const [],
+      ),
   ]..sort((a, b) => b.count.compareTo(a.count));
   return OpeningReport(families, threshold);
 }

@@ -1,9 +1,10 @@
 import 'package:dartchess/dartchess.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers.dart';
 import '../core/opening_report.dart';
+import '../core/pgn_import.dart';
 import 'format.dart';
 
 /// Bilan de mes ouvertures : ce que je joue le plus, variante par variante,
@@ -119,7 +120,7 @@ class _VariantTile extends StatelessWidget {
     final gap = variant.gap;
     final known = variant.knownDepth;
     final total = variant.steps.length;
-    final line = lineLabel(variant.line);
+    final line = variant.line.isEmpty ? 'Position initiale' : lineLabel(variant.line);
     final title = variant.name == null ? line : variant.name!.variation ?? 'Ligne principale';
     return InkWell(
       // La position où mon habitude s'arrête, sinon la fin de la variante.
@@ -172,7 +173,7 @@ class _VariantTile extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Text(_gapText(gap), style: theme.textTheme.bodySmall),
+            Text(_gapText(variant), style: theme.textTheme.bodySmall),
           ],
         ),
       ),
@@ -188,8 +189,13 @@ String _known(int n) => switch (n) {
     };
 
 /// Pourquoi mes coups acquis s'arrêtent là.
-String _gapText(HabitStep? gap) {
-  if (gap == null) return 'Au-delà, pas assez de parties pour juger.';
+String _gapText(OpeningVariant variant) {
+  final gap = variant.gap;
+  if (gap == null) {
+    return variant.line.length >= maxPlies
+        ? 'Connue jusqu\'au bout des ${maxPlies ~/ 2} coups suivis par l\'arbre.'
+        : 'Au-delà, pas assez de parties pour juger.';
+  }
   final ply = gap.line.length;
   final played = '${moveLabel(ply, gap.played.san)} (${percent(gap.share)})';
   switch (gap.status) {

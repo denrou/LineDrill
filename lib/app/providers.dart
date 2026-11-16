@@ -142,18 +142,21 @@ final repertoireUsageProvider = Provider<Map<String, EntryUsage>>((ref) {
 
 /// Noms des ouvertures, par position (table Lichess embarquée).
 final openingBookProvider = FutureProvider<OpeningBook>(
-  (ref) async => OpeningBook.parse(await rootBundle.loadString('assets/openings.tsv')),
+  // Sans cache : la table n'est lue qu'une fois, seul son contenu analysé est gardé.
+  (ref) async => OpeningBook.parse(await rootBundle.loadString('assets/openings.tsv', cache: false)),
 );
 
-/// Bilan des ouvertures de l'arbre filtré ; `null` tant que les parties chargent.
+/// Bilan des ouvertures de l'arbre filtré ; `null` tant que les parties ou
+/// la table des noms chargent.
 final openingReportProvider = Provider<OpeningReport?>((ref) {
   final tree = ref.watch(treeProvider);
-  if (tree == null) return null;
+  final book = ref.watch(openingBookProvider);
+  if (tree == null || book.isLoading) return null;
   return openingReport(
     tree,
     color: ref.watch(filterProvider).color,
-    // Sans la table, le bilan reste juste : les variantes ne sont simplement pas nommées.
-    book: ref.watch(openingBookProvider).value ?? OpeningBook.empty,
+    // Table illisible : le bilan reste juste, les variantes ne sont simplement pas nommées.
+    book: book.value ?? OpeningBook.empty,
     repertoire: ref.watch(repertoireProvider).value,
   );
 });

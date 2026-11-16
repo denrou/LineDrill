@@ -91,8 +91,11 @@ void main() {
       expect(mainLine.gap, isNull);
 
       // Après 3… Qd8, deux coups à peu près aussi joués : pas d'habitude.
+      // La variante suit le plus joué et ne compte que ses parties.
       expect(qd8.name!.variation, isNull);
-      expect(qd8.count, 11);
+      expect(qd8.line.join(' '), 'e4 d5 exd5 Qxd5 Nc3 Qd8 d4');
+      expect(qd8.count, 6);
+      expect(qd8.score, 0);
       expect(qd8.knownDepth, 3);
       final gap = qd8.gap!;
       expect(gap.status, HabitStatus.hesitant);
@@ -109,7 +112,7 @@ void main() {
 
       final played = _report(games, repertoire: Repertoire([star('Nf3')])).families.single.variants.single;
       expect(played.line, ['e4', 'e5', 'Nf3']);
-      expect(played.count, 10);
+      expect(played.count, 2);
       expect(played.knownDepth, 1);
       expect(played.gap!.status, HabitStatus.offRepertoire);
       expect(played.gap!.reference, 'Nf3');
@@ -118,6 +121,7 @@ void main() {
       // Coup de référence jamais joué : la variante s'arrête sur la position.
       final never = _report(games, repertoire: Repertoire([star('d4')])).families.single.variants.single;
       expect(never.line, ['e4', 'e5']);
+      expect(never.count, 10);
       expect(never.gap!.reference, 'd4');
 
       // Coup de référence qui est aussi mon habitude : acquis.
@@ -153,6 +157,64 @@ void main() {
       expect(family.score, closeTo(7 / 12, 0.001));
     });
 
+    test('entre deux ordres de coups, celui du chemin le plus joué est gardé', () {
+      final report = _report(
+        [
+          ..._repeat(6, 'e4 e6 d4 d5', 1, color: Side.black),
+          ..._repeat(60, 'e4 e6 Nf3 d5', 1, color: Side.black),
+          ..._repeat(50, 'd4 e6 e4 d5', 0, color: Side.black),
+          ..._repeat(10, 'd4 e6 c4 d5', 1, color: Side.black),
+        ],
+        color: Side.black,
+      );
+      final lines = {for (final v in report.families.single.variants) v.line.join(' '): v.count};
+      expect(lines, {'e4 e6 Nf3 d5': 60, 'd4 e6 e4 d5': 56, 'd4 e6 c4 d5': 10});
+    });
+
+    test('une ouverture compte aussi les parties qui quittent ses variantes', () {
+      final family = _report(
+        [
+          ..._repeat(30, 'e4 c5 Nf3 d6', 1),
+          ..._repeat(20, 'e4 c5 Nf3 Nc6', 0),
+          ..._repeat(4, 'e4 c5 Nf3 e6', 0),
+          ..._repeat(40, 'e4 c5 c3 d5', 0),
+          ..._repeat(3, 'd4 d5', 1),
+        ],
+        book: _book({'e4 c5': 'Sicilian Defense', 'd4': 'Queen\'s Pawn Game'}),
+        minGames: 10,
+      ).families.single;
+      expect(family.name, 'Sicilian Defense');
+      expect(family.variants.map((v) => v.count), [30, 20]);
+      // Les 2. c3 et la réponse rare 2… e6 restent des Siciliennes ; 1. d4 non.
+      expect(family.count, 94);
+      expect(family.score, closeTo(30 / 94, 0.001));
+    });
+
+    test('à égalité, le coup du répertoire est mon coup habituel', () {
+      final step = _report(
+        [..._repeat(5, 'e4 e5 Bc4', 1), ..._repeat(5, 'e4 e5 Nf3', 1)],
+        repertoire: Repertoire([
+          RepertoireEntry(color: Side.white, positionKey: _key('e4 e5'), san: 'Nf3', line: const ['e4', 'e5']),
+        ]),
+      ).families.single.variants.single.gap!;
+      expect(step.status, HabitStatus.hesitant);
+      expect(step.played.san, 'Nf3');
+      expect(step.alternative!.san, 'Bc4');
+    });
+
+    test('coup de référence jamais joué au premier coup : signalé, pas un bilan vide', () {
+      final variant = _report(
+        _repeat(8, 'e4 e5', 1),
+        repertoire: Repertoire([
+          RepertoireEntry(color: Side.white, positionKey: _key(''), san: 'd4', line: const []),
+        ]),
+      ).families.single.variants.single;
+      expect(variant.line, isEmpty);
+      expect(variant.count, 8);
+      expect(variant.gap!.status, HabitStatus.offRepertoire);
+      expect(variant.gap!.reference, 'd4');
+    });
+
     test('un coup joué 6 fois sur 10 au pour cent près est acquis', () {
       // 28 sur 47 : 59,6 %, affiché 60 %.
       final games = [..._repeat(28, 'e4 e5', 1), ..._repeat(19, 'd4 d5', 1)];
@@ -182,6 +244,8 @@ void main() {
       expect(habitMinGames(450), 8);
       expect(habitMinGames(661), 10);
       expect(_report(_repeat(661, 'e4', 1), minGames: 7).minGames, 7);
+      // Un seuil nul ne fait pas chercher un coup là où aucune partie ne continue.
+      expect(_report(_repeat(2, 'e4 e5', 1), minGames: 0).families.single.variants.single.line, ['e4', 'e5']);
     });
   });
 }

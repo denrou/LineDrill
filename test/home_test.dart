@@ -434,6 +434,7 @@ void openingsTests() {
     expect(find.text('10 parties · 100 % · 2 coups connus', findRichText: true), findsOneWidget);
     expect(find.text('Ligne principale'), findsOneWidget);
     expect(find.text('1. e4 c5 2. Nf3'), findsOneWidget);
+    expect(find.text('11 parties · 0 %', findRichText: true), findsOneWidget);
     expect(find.text('1 coup connu sur 2'), findsOneWidget);
     expect(find.text('Ensuite tu hésites : 2. Nf3 (55 %) ou 2. d4 (45 %).'), findsOneWidget);
 

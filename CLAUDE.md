@@ -58,7 +58,8 @@ Appli Android Flutter d'entraînement aux ouvertures d'échecs, basée sur les p
 - Noms : `assets/openings.tsv` (position → nom), tiré de [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0) et limité aux 16 demi-coups de l'arbre. Noms en anglais ; la famille est ce qui précède les deux-points. Régénérer : `dart run tool/build_openings.dart <dossier des a.tsv … e.tsv> > assets/openings.tsv`.
 - `openingReport` (`lib/core/opening_report.dart`) : depuis la position initiale, suit mon coup à retenir (étoile du répertoire, sinon mon coup le plus joué) et ouvre une variante par réponse adverse vue dans au moins N parties. N = parties de la couleur ÷ 60, borné entre 5 et 10 : 10 comme les lignes faibles, moins après un premier import.
 - Un coup est « connu » s'il est joué dans au moins 60 % des parties (au pour cent près, comme à l'affichage) et s'accorde avec le répertoire. La profondeur connue d'une variante compte les coups connus d'affilée depuis le début (8 au plus, l'arbre s'arrêtant à 16 demi-coups).
-- Parties d'une variante = parties passées par la position où mène sa dernière réponse adverse, quel que soit l'ordre des coups. Deux ordres de coups qui se rejoignent ne font qu'une variante (celle du plus joué) et une famille compte chaque partie une fois.
+- Parties d'une variante = parties arrivées au bout de sa ligne, quel que soit l'ordre des coups. Deux ordres de coups qui se rejoignent ne font qu'une variante, celle du chemin le plus joué.
+- Une partie compte dans une seule ouverture : celle de la position la plus profonde de son chemin que le parcours a traversée. Une ouverture compte donc aussi les parties qui quittent ses variantes en route (réponse adverse rare, autre coup de ma part).
 - Rapport en console : `dart run tool/openings_report.dart <pgn> <pseudo>`.
 - Écran : Répertoire → « Mes ouvertures » (`lib/ui/openings_screen.dart`).
 
