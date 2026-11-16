@@ -69,7 +69,7 @@ class OpeningVariant {
 
   int get count => games.length;
 
-  late final double score = _meanScore(games);
+  late final double score = meanScore(games);
 
   /// Nombre de mes coups acquis d'affilée depuis le début.
   int get knownDepth => steps.takeWhile((s) => s.status == HabitStatus.known).length;
@@ -93,7 +93,7 @@ class OpeningFamily {
 
   int get count => games.length;
 
-  late final double score = _meanScore(games);
+  late final double score = meanScore(games);
 }
 
 /// Mes ouvertures, de la plus jouée à la moins jouée.
@@ -109,58 +109,42 @@ class OpeningReport {
 /// Famille des variantes qu'aucune position nommée ne traverse.
 const unnamedFamily = 'Autres lignes';
 
+/// Part des parties à partir de laquelle un coup est une habitude.
+const habitShare = 0.6;
+
 /// Seuil de parties d'une variante : 10 comme pour les lignes faibles, moins
 /// quand il y a peu de parties (5 au minimum) pour qu'un bilan reste possible
 /// après un premier import.
 int habitMinGames(int games) => (games / 60).round().clamp(5, 10);
 
-double _meanScore(List<GameRecord> games) =>
-    games.isEmpty ? 0 : games.fold<double>(0, (sum, g) => sum + g.score) / games.length;
-
 /// Bilan de mes ouvertures avec [color] : ce que je joue, variante par
 /// variante, et jusqu'où mes coups sont une habitude.
 ///
-/// Depuis la position initiale, mon coup à retenir est suivi (celui du
-/// [repertoire], sinon le plus joué) et chaque réponse adverse vue dans au
-/// moins [minGames] parties ouvre une branche. Une variante s'arrête quand
-/// les parties deviennent trop rares ; deux ordres de coups qui se rejoignent
-/// ne font qu'une variante, celle du plus joué. Un de mes coups est acquis
-/// s'il est joué dans au moins [minShare] des parties (au pour cent près,
-/// comme à l'affichage) et s'accorde avec le répertoire.
+/// Depuis la position initiale, chaque réponse adverse vue dans au moins
+/// [minGames] parties ouvre une branche, et de mon côté un seul coup est
+/// suivi : celui du [repertoire] si je le joue dans au moins [minGames]
+/// parties, sinon mon coup le plus joué, pour que le bilan reste celui de
+/// mes parties. Une variante s'arrête quand les parties deviennent trop
+/// rares ; deux ordres de coups qui se rejoignent ne font qu'une variante,
+/// celle du chemin le plus joué.
 ///
-/// Chaque partie compte dans une seule ouverture : celle de la position la
-/// plus profonde de son chemin que le parcours a traversée.
+/// Un de mes coups est acquis s'il est joué dans au moins [habitShare] des
+/// parties (au pour cent près, comme à l'affichage) et s'accorde avec le
+/// répertoire. Chaque partie compte dans une seule ouverture : celle de la
+/// position la plus profonde de son chemin que le parcours a traversée.
 OpeningReport openingReport(
   OpeningTree tree, {
   required Side color,
   OpeningBook book = OpeningBook.empty,
   Repertoire? repertoire,
   int? minGames,
-  double minShare = 0.6,
 }) {
   final threshold = math.max(1, minGames ?? habitMinGames(tree.games.length));
-
-  // Parties passées par chaque position, quel que soit l'ordre des coups
-  // (une partie qui répète une position n'y compte qu'une fois).
-  final reaching = <String, List<GameRecord>>{tree.rootKey: tree.games};
-  for (final game in tree.games) {
-    var node = tree.root;
-    for (final san in game.sans) {
-      final move = node.move(san);
-      if (move == null) break;
-      // Toutes les parties partent déjà de la position initiale.
-      if (move.childKey != tree.rootKey) {
-        final games = reaching.putIfAbsent(move.childKey, () => []);
-        if (games.isEmpty || !identical(games.last, game)) games.add(game);
-      }
-      node = tree.node(move.childKey)!;
-    }
-  }
 
   // Ouverture de chaque position traversée, et variante retenue pour chaque
   // position d'arrivée.
   final familyAt = <String, String?>{};
-  final found = <String, ({OpeningVariant variant, int flow})>{};
+  final found = <String, ({List<String> line, OpeningName? name, List<HabitStep> steps, int flow})>{};
 
   // [flow] : le coup le moins joué du chemin, qui départage deux ordres de
   // coups vers la même position. [path] : positions déjà traversées, une
@@ -176,11 +160,10 @@ OpeningReport openingReport(
     name = book.nameOf(node.key) ?? name;
     familyAt.putIfAbsent(node.key, () => name?.family);
     void end(List<HabitStep> steps) {
-      if (line.isEmpty && steps.isEmpty) return;
+      if (line.isEmpty) return;
       final known = found[node.key];
       if (known != null && known.flow >= flow) return;
-      final variant = OpeningVariant(line: line, name: name, games: reaching[node.key]!, steps: steps);
-      found[node.key] = (variant: variant, flow: flow);
+      found[node.key] = (line: line, name: name, steps: steps, flow: flow);
       familyAt[node.key] = name?.family;
     }
 
@@ -216,15 +199,17 @@ OpeningReport openingReport(
       reference: reference,
       status: reference != played.san
           ? HabitStatus.offRepertoire
-          : (played.count * 100 / reached).round() < (minShare * 100).round()
+          : (played.count * 100 / reached).round() < (habitShare * 100).round()
               ? HabitStatus.hesitant
               : HabitStatus.known,
     );
-    final next = node.move(reference);
-    if (next == null || path.contains(next.childKey)) return end([...steps, step]);
+    // Un coup du répertoire que je ne joue presque jamais ne doit pas
+    // cacher les ouvertures que je joue vraiment en dessous.
+    final next = starred != null && starred.count >= threshold ? starred : played;
+    if (path.contains(next.childKey)) return end([...steps, step]);
     walk(
       tree.node(next.childKey)!,
-      [...line, reference],
+      [...line, next.san],
       [...steps, step],
       name,
       {...path, next.childKey},
@@ -234,6 +219,9 @@ OpeningReport openingReport(
 
   walk(tree.root, const [], const [], null, {tree.rootKey}, tree.games.length);
 
+  // Un seul passage sur les parties : celles de chaque variante (arrivées au
+  // bout de sa ligne) et celles de chaque ouverture.
+  final gamesAt = {for (final key in found.keys) key: <GameRecord>[]};
   final gamesOf = <String, List<GameRecord>>{};
   for (final game in tree.games) {
     var node = tree.root;
@@ -242,14 +230,19 @@ OpeningReport openingReport(
       final move = node.move(san);
       if (move == null) break;
       if (familyAt.containsKey(move.childKey)) family = familyAt[move.childKey];
+      // Une partie qui répète une position n'y compte qu'une fois.
+      final arrived = gamesAt[move.childKey];
+      if (arrived != null && (arrived.isEmpty || !identical(arrived.last, game))) arrived.add(game);
       node = tree.node(move.childKey)!;
     }
     gamesOf.putIfAbsent(family ?? unnamedFamily, () => []).add(game);
   }
 
   final byFamily = <String, List<OpeningVariant>>{};
-  for (final (:variant, flow: _) in found.values) {
-    byFamily.putIfAbsent(variant.name?.family ?? unnamedFamily, () => []).add(variant);
+  for (final MapEntry(:key, value: (:line, :name, :steps, flow: _)) in found.entries) {
+    byFamily
+        .putIfAbsent(name?.family ?? unnamedFamily, () => [])
+        .add(OpeningVariant(line: line, name: name, games: gamesAt[key]!, steps: steps));
   }
   final families = [
     for (final entry in byFamily.entries)

@@ -19,6 +19,7 @@ class OpeningsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final color = ref.watch(filterProvider).color;
     final report = ref.watch(openingReportProvider);
+    final unnamed = ref.watch(openingBookProvider).hasError;
     final theme = Theme.of(context);
 
     void open(List<String> line) {
@@ -52,12 +53,21 @@ class OpeningsScreen extends ConsumerWidget {
                         ? 'Pas encore assez de parties avec cette couleur : une variante compte '
                             'à partir de ${report.minGames} parties. Importe plus de mois.'
                         : 'Tes ouvertures, de la plus jouée à la moins jouée. Une variante compte à partir '
-                            'de ${report.minGames} parties ; un coup est connu quand tu le joues au moins 6 fois sur 10.',
+                            'de ${report.minGames} parties ; un coup est connu quand tu le joues au moins '
+                            '${(habitShare * 10).round()} fois sur 10.'
+                            '${unnamed ? ' Les noms des ouvertures n\'ont pas pu être chargés.' : ''}',
                     style: theme.textTheme.bodyMedium,
                   ),
                 ),
                 for (final (i, family) in report.families.indexed)
-                  _FamilyCard(family: family, initiallyExpanded: i == 0, onOpen: open),
+                  _FamilyCard(
+                    // Sans clé propre à la couleur, l'état ouvert ou fermé d'une
+                    // carte passerait d'une couleur à l'autre.
+                    key: PageStorageKey('${color.name} ${family.name}'),
+                    family: family,
+                    initiallyExpanded: i == 0,
+                    onOpen: open,
+                  ),
               ],
             ),
     );
@@ -65,7 +75,7 @@ class OpeningsScreen extends ConsumerWidget {
 }
 
 class _FamilyCard extends StatelessWidget {
-  const _FamilyCard({required this.family, required this.initiallyExpanded, required this.onOpen});
+  const _FamilyCard({super.key, required this.family, required this.initiallyExpanded, required this.onOpen});
 
   final OpeningFamily family;
   final bool initiallyExpanded;
@@ -81,9 +91,6 @@ class _FamilyCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        // Sans clé, l'état ouvert ou fermé suivrait la place de la carte
-        // quand la couleur change.
-        key: PageStorageKey(family.name),
         initiallyExpanded: initiallyExpanded,
         shape: const Border(),
         collapsedShape: const Border(),
@@ -120,8 +127,9 @@ class _VariantTile extends StatelessWidget {
     final gap = variant.gap;
     final known = variant.knownDepth;
     final total = variant.steps.length;
-    final line = variant.line.isEmpty ? 'Position initiale' : lineLabel(variant.line);
-    final title = variant.name == null ? line : variant.name!.variation ?? 'Ligne principale';
+    final line = lineLabel(variant.line);
+    // Sans nom de variante, la ligne elle-même distingue les variantes.
+    final variation = variant.name?.variation;
     return InkWell(
       // La position où mon habitude s'arrête, sinon la fin de la variante.
       onTap: () => onOpen(gap?.line ?? variant.line),
@@ -133,7 +141,7 @@ class _VariantTile extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: Text(title, style: theme.textTheme.titleSmall)),
+                Expanded(child: Text(variation ?? line, style: theme.textTheme.titleSmall)),
                 const SizedBox(width: 8),
                 Text.rich(
                   TextSpan(children: [
@@ -147,7 +155,7 @@ class _VariantTile extends StatelessWidget {
                 ),
               ],
             ),
-            if (variant.name != null) ...[
+            if (variation != null) ...[
               const SizedBox(height: 2),
               Text(line, style: theme.textTheme.bodySmall),
             ],
@@ -198,16 +206,10 @@ String _gapText(OpeningVariant variant) {
   }
   final ply = gap.line.length;
   final played = '${moveLabel(ply, gap.played.san)} (${percent(gap.share)})';
-  switch (gap.status) {
-    case HabitStatus.offRepertoire:
-      return 'Ton répertoire prévoit ${moveLabel(ply, gap.reference)}, tu joues surtout $played.';
-    case HabitStatus.hesitant:
-      final other = gap.alternative;
-      return other == null
-          ? 'Ensuite tu hésites : $played.'
-          : 'Ensuite tu hésites : $played ou '
-              '${moveLabel(ply, other.san)} (${percent(other.count / gap.reached)}).';
-    case HabitStatus.known:
-      return '';
+  if (gap.status == HabitStatus.offRepertoire) {
+    return 'Ton répertoire prévoit ${moveLabel(ply, gap.reference)}, tu joues surtout $played.';
   }
+  // Hésitation : un autre coup prend forcément le reste des parties.
+  final other = gap.alternative!;
+  return 'Ensuite tu hésites : $played ou ${moveLabel(ply, other.san)} (${percent(other.count / gap.reached)}).';
 }

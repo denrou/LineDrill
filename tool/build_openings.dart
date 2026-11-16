@@ -13,6 +13,8 @@ void main(List<String> args) {
     ..sort((a, b) => a.path.compareTo(b.path));
   final names = <String, String>{};
   var skipped = 0;
+  var unreadable = 0;
+  var collisions = 0;
   for (final file in files) {
     // Colonnes : eco, nom, coups (« 1. e4 d5 2. exd5 »).
     for (final row in file.readAsLinesSync().skip(1)) {
@@ -32,15 +34,24 @@ void main(List<String> args) {
       }
       if (position == null) {
         stderr.writeln('Coups illisibles : $row');
-        exitCode = 1;
+        unreadable++;
         continue;
       }
-      names.putIfAbsent(positionKey(position), () => columns[1]);
+      // Deux ouvertures sur la même position : la première lue garde le nom.
+      final key = positionKey(position);
+      if (names.containsKey(key)) collisions++;
+      names.putIfAbsent(key, () => columns[1]);
     }
+  }
+  // Rien n'est écrit : la sortie remplace d'habitude la table en place.
+  if (unreadable > 0) {
+    stderr.writeln('$unreadable ouvertures illisibles : table non générée.');
+    exit(1);
   }
   final keys = names.keys.toList()..sort();
   for (final key in keys) {
     print('$key\t${names[key]}');
   }
-  stderr.writeln('${names.length} positions nommées, $skipped ouvertures au-delà de $maxPlies demi-coups ignorées.');
+  stderr.writeln('${names.length} positions nommées, $skipped ouvertures au-delà de $maxPlies demi-coups ignorées, '
+      '$collisions positions à deux noms.');
 }

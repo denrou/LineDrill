@@ -1,6 +1,5 @@
-import 'dart:io';
-
-import 'package:dartchess/dartchess.dart' hide File;
+import 'package:dartchess/dartchess.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:linedrill/core/game_record.dart';
 import 'package:linedrill/core/opening_report.dart';
@@ -50,8 +49,10 @@ void main() {
       expect(book.nameOf('inconnue'), isNull);
     });
 
-    test('la table embarquée nomme les positions de l\'arbre', () {
-      final book = OpeningBook.parse(File('assets/openings.tsv').readAsStringSync());
+    test('la table embarquée nomme les positions de l\'arbre', () async {
+      // Par le bundle, comme l'appli : la table doit rester déclarée dans le pubspec.
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final book = OpeningBook.parse(await rootBundle.loadString('assets/openings.tsv'));
       expect(book.length, greaterThan(3000));
       expect(book.nameOf(_key('e4 d5'))!.full, 'Scandinavian Defense');
       expect(book.nameOf(_key('e4 d5 exd5 Qxd5 Nc3 Qa5'))!.family, 'Scandinavian Defense');
@@ -105,28 +106,37 @@ void main() {
       expect(gap.share, closeTo(6 / 11, 0.001));
     });
 
-    test('le coup du répertoire passe avant l\'habitude', () {
+    test('le coup du répertoire est celui à retenir, la variante reste celle que je joue', () {
       final games = [..._repeat(8, 'e4 e5 Bc4 Nc6', 0), ..._repeat(2, 'e4 e5 Nf3 Nc6', 1)];
       RepertoireEntry star(String san) =>
           RepertoireEntry(color: Side.white, positionKey: _key('e4 e5'), san: san, line: const ['e4', 'e5']);
 
-      final played = _report(games, repertoire: Repertoire([star('Nf3')])).families.single.variants.single;
-      expect(played.line, ['e4', 'e5', 'Nf3']);
-      expect(played.count, 2);
-      expect(played.knownDepth, 1);
-      expect(played.gap!.status, HabitStatus.offRepertoire);
-      expect(played.gap!.reference, 'Nf3');
-      expect(played.gap!.played.san, 'Bc4');
-
-      // Coup de référence jamais joué : la variante s'arrête sur la position.
-      final never = _report(games, repertoire: Repertoire([star('d4')])).families.single.variants.single;
-      expect(never.line, ['e4', 'e5']);
-      expect(never.count, 10);
-      expect(never.gap!.reference, 'd4');
+      // Coup de référence peu joué, ou jamais : signalé, sans cacher ce que je joue.
+      for (final san in ['Nf3', 'd4']) {
+        final variant = _report(games, repertoire: Repertoire([star(san)])).families.single.variants.single;
+        expect(variant.line.join(' '), 'e4 e5 Bc4 Nc6');
+        expect(variant.count, 8);
+        expect(variant.knownDepth, 1);
+        expect(variant.gap!.status, HabitStatus.offRepertoire);
+        expect(variant.gap!.reference, san);
+        expect(variant.gap!.played.san, 'Bc4');
+      }
 
       // Coup de référence qui est aussi mon habitude : acquis.
       final same = _report(games, repertoire: Repertoire([star('Bc4')])).families.single.variants.single;
       expect(same.knownDepth, 2);
+    });
+
+    test('un coup du répertoire assez joué est suivi, même s\'il n\'est pas le plus joué', () {
+      final variant = _report(
+        [..._repeat(8, 'e4 e5 Bc4 Nc6', 0), ..._repeat(6, 'e4 e5 Nf3 Nc6', 1)],
+        repertoire: Repertoire([
+          RepertoireEntry(color: Side.white, positionKey: _key('e4 e5'), san: 'Nf3', line: const ['e4', 'e5']),
+        ]),
+      ).families.single.variants.single;
+      expect(variant.line.join(' '), 'e4 e5 Nf3 Nc6');
+      expect(variant.count, 6);
+      expect(variant.gap!.status, HabitStatus.offRepertoire);
     });
 
     test('Noirs : une variante par premier coup adverse assez joué', () {
@@ -209,8 +219,9 @@ void main() {
           RepertoireEntry(color: Side.white, positionKey: _key(''), san: 'd4', line: const []),
         ]),
       ).families.single.variants.single;
-      expect(variant.line, isEmpty);
+      expect(variant.line, ['e4', 'e5']);
       expect(variant.count, 8);
+      expect(variant.knownDepth, 0);
       expect(variant.gap!.status, HabitStatus.offRepertoire);
       expect(variant.gap!.reference, 'd4');
     });
