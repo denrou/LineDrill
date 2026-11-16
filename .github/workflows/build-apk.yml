@@ -31,9 +31,7 @@ jobs:
           cache: true
 
       - run: flutter pub get
-      # Flutter 3.50 signale `package:flutter/material.dart` comme déprécié
-      # dans chaque écran ; une simple info ne doit pas bloquer l'APK.
-      - run: flutter analyze --no-fatal-infos
+      - run: flutter analyze
       - run: flutter test
 
       - name: Decode signing key
