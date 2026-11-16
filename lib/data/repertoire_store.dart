@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/drill.dart';
+import '../core/opening_report.dart';
 import '../core/repertoire.dart';
 
 /// Répertoire et réglages, stockés en JSON dans le dossier de l'appli.
@@ -17,6 +18,8 @@ class RepertoireStore {
   File get _settingsFile => File('${root.path}/settings.json');
 
   File get _drillFile => File('${root.path}/drill.json');
+
+  File get _habitsFile => File('${root.path}/habits.json');
 
   // Lectures synchrones : ces fichiers ne font que quelques Ko.
   Future<Repertoire> loadRepertoire() async {
@@ -81,6 +84,32 @@ class RepertoireStore {
     });
     _settingsQueue = write.catchError((Object _) {});
     return write;
+  }
+
+  /// Avis de Stockfish sur mes coups habituels, par `habitCheckKey`.
+  ///
+  /// Ce n'est qu'un cache : un fichier illisible est traité comme vide et
+  /// les coups sont jugés à nouveau.
+  Future<Map<String, HabitCheck>> loadHabitChecks() async {
+    if (!_habitsFile.existsSync()) return {};
+    try {
+      final json = (jsonDecode(_habitsFile.readAsStringSync()) as Map).cast<String, Object?>();
+      return {
+        for (final e in json.entries)
+          if (e.value is Map) e.key: ?HabitCheck.fromJson((e.value! as Map).cast<String, Object?>()),
+      };
+    } on FormatException {
+      return {};
+    } on TypeError {
+      return {};
+    }
+  }
+
+  Future<void> saveHabitChecks(Map<String, HabitCheck> checks) async {
+    await root.create(recursive: true);
+    final tmp = File('${_habitsFile.path}.tmp');
+    await tmp.writeAsString(jsonEncode({for (final e in checks.entries) e.key: e.value.toJson()}));
+    await tmp.rename(_habitsFile.path);
   }
 
   /// État des révisions (répétition espacée).
