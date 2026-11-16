@@ -89,20 +89,24 @@ class _HabitPanel extends ConsumerWidget {
     final repertoire = ref.watch(repertoireProvider).value;
     if (repertoire == null) return const SizedBox.shrink();
     final theme = Theme.of(context);
-    // Une erreur ne concerne que le bilan (la couleur) où elle est arrivée.
-    final error = check.color == color ? check.error : null;
+    // Une vérification, ou son erreur, ne concerne que le bilan (la couleur)
+    // où elle a été lancée ; un seul lancement à la fois.
+    final here = check.color == color;
+    final running = check.running && here;
+    final error = here ? check.error : null;
     final String text;
     Widget? action;
 
-    if (check.running) {
+    if (running) {
       text = 'Stockfish vérifie tes coups habituels : ${check.done} sur ${check.total}.';
     } else if (report.unchecked.isNotEmpty) {
       text = error != null
           ? 'Vérification impossible : $error'
           : 'Stockfish peut vérifier tes coups habituels et remplacer ceux qui perdent du terrain, '
-              'avant d\'en faire ton répertoire.';
+              'avant d\'en faire ton répertoire.'
+              '${check.running ? ' Il termine d\'abord l\'autre couleur.' : ''}';
       action = FilledButton.icon(
-        onPressed: () => ref.read(habitCheckProvider.notifier).start(),
+        onPressed: check.running ? null : () => ref.read(habitCheckProvider.notifier).start(),
         icon: const Icon(Icons.fact_check_outlined, size: 18),
         label: Text(error != null ? 'Réessayer' : 'Vérifier mes coups'),
       );
@@ -142,7 +146,7 @@ class _HabitPanel extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(text),
-            if (check.running)
+            if (running)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: LinearProgressIndicator(value: check.total == 0 ? 0 : check.done / check.total),

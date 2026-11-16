@@ -10,6 +10,7 @@ import 'package:linedrill/core/game_record.dart';
 import 'package:linedrill/core/opening_report.dart';
 import 'package:linedrill/core/opening_tree.dart';
 import 'package:linedrill/core/openings.dart';
+import 'package:linedrill/core/repertoire.dart';
 import 'package:linedrill/core/training.dart';
 import 'package:linedrill/engine/chess_engine.dart';
 
@@ -44,12 +45,16 @@ class _PickyEngine implements ChessEngine {
   /// Position où [failure] est levée ; `null` : à la première analyse.
   String? failAt;
 
+  /// Le moteur répond, mais sans aucune ligne.
+  bool silent = false;
+
   @override
   Future<List<EngineLine>> analyse(String fen, {int depth = 12, int multiPv = 1}) async {
     final p = Chess.fromSetup(Setup.parseFen(fen));
     final key = positionKey(p);
     if (failure != null && (failAt == null || failAt == key)) throw failure!;
     asked.add(key);
+    if (silent) return const [];
     if (key == _key('e4 c5')) return [const EngineLine('d2d4', 40)];
     if (key == _key('e4 c5 Nf3')) return [const EngineLine('d7d6', 400)];
     final first = p.legalMoves.entries.firstWhere((e) => e.value.isNotEmpty);
@@ -149,9 +154,14 @@ void main() {
     final checked = await report(container);
     final entries = habitEntries(checked, Side.white, container.read(repertoireProvider).value!);
     await container.read(repertoireProvider.notifier).addMissing(entries);
+    // Même proposé à nouveau, un coup de référence existant reste, et reste à sa place.
+    await container.read(repertoireProvider.notifier).addMissing([
+      RepertoireEntry(color: Side.white, positionKey: _key('e4 c5'), san: 'd4', line: const ['e4', 'c5']),
+    ]);
     final repertoire = container.read(repertoireProvider).value!;
     expect(repertoire.lookup(Side.white, _key('e4 c5'))!.san, 'Nf3');
     expect(repertoire.entries, hasLength(3));
+    expect(repertoire.entries.first.positionKey, _key('e4 c5'));
   });
 
   test('moteur en panne : erreur affichable, rien d\'enregistré', () async {
@@ -177,6 +187,33 @@ void main() {
     final saved = await newContainer().read(habitChecksProvider.future);
     expect(saved.keys, containsAll([habitCheckKey(_key(''), 'e4'), habitCheckKey(_key('e4 c5'), 'Nf3')]));
     expect(saved.containsKey(habitCheckKey(_key('e4 e5'), 'Nf3')), isFalse);
+  });
+
+  test('moteur muet : pas d\'avis par défaut, rien d\'enregistré', () async {
+    engine.silent = true;
+    final container = newContainer();
+    await report(container);
+    await container.read(habitCheckProvider.notifier).start();
+    expect(container.read(habitCheckProvider).error, contains('rien répondu'));
+    expect(await newContainer().read(habitChecksProvider.future), isEmpty);
+  });
+
+  test('le moteur est relancé après un démarrage raté', () async {
+    var starts = 0;
+    final container = ProviderContainer(overrides: [
+      appDirProvider.overrideWith((ref) async => tmp),
+      gamesProvider.overrideWith(_Games.new),
+      engineProvider.overrideWith((ref) async => ++starts == 1 ? throw StateError('pas démarré') : engine),
+      openingBookProvider.overrideWith((ref) async => OpeningBook.empty),
+    ]);
+    addTearDown(container.dispose);
+    await report(container);
+    await container.read(habitCheckProvider.notifier).start();
+    expect(container.read(habitCheckProvider).error, contains('pas démarré'));
+
+    await container.read(habitCheckProvider.notifier).start();
+    expect(container.read(habitCheckProvider).error, isNull);
+    expect(container.read(habitCheckProvider).done, 4);
   });
 
   test('la couleur du lancement est gardée si l\'écran en change', () async {

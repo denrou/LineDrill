@@ -3,11 +3,36 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/opening_report.dart';
 import '../core/training.dart';
+import '../engine/chess_engine.dart';
 import 'play_controller.dart';
 import 'providers.dart';
 
-/// Profondeur d'analyse pour juger mes coups habituels, comme en partie corrigée.
-const _depth = 12;
+/// Temps laissé à Stockfish pour juger un coup, avant de conclure qu'il ne
+/// répond plus.
+const _patience = Duration(seconds: 30);
+
+/// Nombre d'avis entre deux écritures sur disque : une appli fermée en
+/// pleine vérification n'en perd pas plus.
+const _saveEvery = 10;
+
+/// Moteur qui refuse une analyse vide. En partie corrigée, `judgeMove` la
+/// prend pour « bon coup » et la partie continue ; ici l'avis serait gardé
+/// pour de bon, mieux vaut s'arrêter.
+class _StrictEngine implements ChessEngine {
+  const _StrictEngine(this._engine);
+
+  final ChessEngine _engine;
+
+  @override
+  Future<List<EngineLine>> analyse(String fen, {int depth = judgeDepth, int multiPv = 1}) async {
+    final lines = await _engine.analyse(fen, depth: depth, multiPv: multiPv);
+    if (lines.isEmpty) throw StateError('Stockfish n\'a rien répondu');
+    return lines;
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
 
 class HabitCheckState {
   const HabitCheckState({this.running = false, this.color, this.done = 0, this.total = 0, this.error});
@@ -41,7 +66,9 @@ class HabitCheckController extends Notifier<HabitCheckState> {
     state = HabitCheckState(running: true, color: color);
     var done = 0;
     try {
-      final engine = await ref.read(engineProvider.future);
+      // Un moteur qui n'a pas démarré est relancé : « Réessayer » doit pouvoir réussir.
+      if (ref.read(engineProvider).hasError) ref.invalidate(engineProvider);
+      final engine = _StrictEngine(await ref.read(engineProvider.future));
       await ref.read(habitChecksProvider.future);
       final checks = ref.read(habitChecksProvider.notifier);
       // Un avis peut changer le coup à retenir, donc la suite de la variante :
@@ -64,16 +91,13 @@ class HabitCheckController extends Notifier<HabitCheckState> {
         final found = <String, HabitCheck>{};
         try {
           for (final habit in todo) {
-            final verdict = await judgeMove(
-              engine,
-              habit.node.position,
-              habit.move.move,
-              depth: _depth,
-              explain: false,
-            );
+            final verdict =
+                await judgeMove(engine, habit.node.position, habit.move.move, explain: false).timeout(_patience);
             if (!ref.mounted) return;
             found[habit.key] = HabitCheck(verdict.quality, better: verdict.better);
             state = HabitCheckState(running: true, color: color, done: ++done, total: total);
+            if (found.length % _saveEvery == 0) await checks.addAll(found);
+            if (!ref.mounted) return;
           }
         } finally {
           // Un passage interrompu garde ce qu'il a déjà jugé.

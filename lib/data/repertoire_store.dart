@@ -85,16 +85,19 @@ class RepertoireStore {
     return write;
   }
 
-  /// Avis de Stockfish sur mes coups habituels, par `habitCheckKey`.
+  /// Avis de Stockfish sur mes coups habituels, par `habitCheckKey`, rendus
+  /// à la profondeur d'analyse [depth].
   ///
-  /// Ce n'est qu'un cache : un fichier illisible est traité comme vide et
-  /// les coups sont jugés à nouveau.
-  Future<Map<String, HabitCheck>> loadHabitChecks() async {
+  /// Ce n'est qu'un cache : un fichier illisible, ou écrit à une autre
+  /// profondeur, est traité comme vide et les coups sont jugés à nouveau.
+  Future<Map<String, HabitCheck>> loadHabitChecks({required int depth}) async {
     if (!_habitsFile.existsSync()) return {};
     try {
       final json = (jsonDecode(_habitsFile.readAsStringSync()) as Map).cast<String, Object?>();
+      if (json['depth'] != depth) return {};
+      final checks = (json['checks']! as Map).cast<String, Object?>();
       return {
-        for (final e in json.entries)
+        for (final e in checks.entries)
           if (e.value is Map) e.key: ?HabitCheck.fromJson((e.value! as Map).cast<String, Object?>()),
       };
     } on FormatException {
@@ -104,8 +107,13 @@ class RepertoireStore {
     }
   }
 
-  Future<void> saveHabitChecks(Map<String, HabitCheck> checks) =>
-      _writeAtomic(_habitsFile, jsonEncode({for (final e in checks.entries) e.key: e.value.toJson()}));
+  Future<void> saveHabitChecks(Map<String, HabitCheck> checks, {required int depth}) => _writeAtomic(
+        _habitsFile,
+        jsonEncode({
+          'depth': depth,
+          'checks': {for (final e in checks.entries) e.key: e.value.toJson()},
+        }),
+      );
 
   /// État des révisions (répétition espacée).
   Future<DrillDeck> loadDeck() async {

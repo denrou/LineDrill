@@ -97,6 +97,10 @@ int _weightedIndex(List<double> weights, math.Random random) {
   return weights.length - 1;
 }
 
+/// Profondeur d'analyse pour juger mes coups, en partie corrigée comme pour
+/// vérifier mes habitudes : un même coup y reçoit le même verdict.
+const judgeDepth = 12;
+
 /// Verdict sur un coup de l'utilisateur.
 class MoveVerdict {
   const MoveVerdict(this.quality, {this.better, this.loss = 0, this.explanation});
@@ -147,7 +151,7 @@ Future<MoveVerdict> judgeMove(
   ChessEngine engine,
   Position before,
   Move move, {
-  int depth = 12,
+  int depth = judgeDepth,
   bool explain = true,
 }) async {
   final lines = await engine.analyse(before.fen, depth: depth, multiPv: 3);

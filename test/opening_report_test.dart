@@ -399,21 +399,27 @@ void main() {
       final tmp = await Directory.systemTemp.createTemp('linedrill');
       addTearDown(() => tmp.delete(recursive: true));
       final store = RepertoireStore(tmp);
-      expect(await store.loadHabitChecks(), isEmpty);
+      expect(await store.loadHabitChecks(depth: 12), isEmpty);
       await store.saveHabitChecks({
         'a|e4': _good,
         'b|Qh5': const HabitCheck(MoveQuality.blunder, better: 'Nf3'),
-      });
-      final back = await RepertoireStore(tmp).loadHabitChecks();
+      }, depth: 12);
+      final back = await RepertoireStore(tmp).loadHabitChecks(depth: 12);
       expect(back['a|e4']!.isError, isFalse);
       expect(back['a|e4']!.better, isNull);
       expect(back['b|Qh5']!.quality, MoveQuality.blunder);
       expect(back['b|Qh5']!.better, 'Nf3');
 
-      File('${tmp.path}/habits.json').writeAsStringSync('{"a|e4": {"quality": "inconnue"}, "b|Qh5": 3, "c|d4": {"quality": "good"}}');
-      expect((await store.loadHabitChecks()).keys, ['c|d4']);
-      File('${tmp.path}/habits.json').writeAsStringSync('{"a|e4": {');
-      expect(await store.loadHabitChecks(), isEmpty);
+      // Avis rendus à une autre profondeur : à refaire.
+      expect(await store.loadHabitChecks(depth: 16), isEmpty);
+
+      File('${tmp.path}/habits.json').writeAsStringSync(
+          '{"depth": 12, "checks": {"a|e4": {"quality": "inconnue"}, "b|Qh5": 3, "c|d4": {"quality": "good"}}}');
+      expect((await store.loadHabitChecks(depth: 12)).keys, ['c|d4']);
+      for (final broken in ['{"depth": 12, "checks": {', '{"depth": 12}', '[]']) {
+        File('${tmp.path}/habits.json').writeAsStringSync(broken);
+        expect(await store.loadHabitChecks(depth: 12), isEmpty, reason: broken);
+      }
     });
   });
 }

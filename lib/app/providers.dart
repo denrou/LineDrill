@@ -11,6 +11,7 @@ import '../core/opening_report.dart';
 import '../core/opening_tree.dart';
 import '../core/openings.dart';
 import '../core/repertoire.dart';
+import '../core/training.dart';
 import '../core/weak_lines.dart';
 import '../data/chesscom_client.dart';
 import '../data/game_store.dart';
@@ -127,8 +128,10 @@ class RepertoireNotifier extends AsyncNotifier<Repertoire> {
           )));
 
   /// Ajoute [entries] là où il n'y a pas encore de coup de référence.
-  Future<void> addMissing(List<RepertoireEntry> entries) =>
-      _save((r) => Repertoire([...entries, ...r.entries]));
+  Future<void> addMissing(List<RepertoireEntry> entries) => _save((r) => Repertoire([
+        ...r.entries,
+        ...entries.where((e) => r.lookup(e.color, e.positionKey) == null),
+      ]));
 
   Future<void> remove(Side color, String key) => _save((r) => r.without(color, key));
 }
@@ -154,12 +157,12 @@ final openingBookProvider = FutureProvider<OpeningBook>(
 class HabitChecksNotifier extends AsyncNotifier<Map<String, HabitCheck>> {
   @override
   Future<Map<String, HabitCheck>> build() async =>
-      (await ref.watch(repertoireStoreProvider.future)).loadHabitChecks();
+      (await ref.watch(repertoireStoreProvider.future)).loadHabitChecks(depth: judgeDepth);
 
   Future<void> addAll(Map<String, HabitCheck> checks) async {
     final next = {...await future, ...checks};
     state = AsyncData(next);
-    await (await ref.read(repertoireStoreProvider.future)).saveHabitChecks(next);
+    await (await ref.read(repertoireStoreProvider.future)).saveHabitChecks(next, depth: judgeDepth);
   }
 }
 
